@@ -44,20 +44,24 @@ func notTransient(status int, _ []byte) bool { return status != http.StatusServi
 // actor cannot tell from a denial.
 func reached(status int, _ []byte) bool { return status == http.StatusOK }
 
-// TestActorEgressPolicyDeniesUnlistedHost: the policy names one hostname, so
-// the origin is reachable by that name and refused by its address, which is
-// the same server.
+// TestActorEgressPolicyDeniesUnlistedHost checks that two actors in the same
+// atespace get different results for the same address based on their policies.
 func TestActorEgressPolicyDeniesUnlistedHost(t *testing.T) {
 	ctx := context.Background()
 	dataplane := e2e.CurrentAtenetDataplane()
+	const originBody = "egress policy origin"
 	origin := egressHTTPTarget()
+	origin.Args = append(origin.Args, "--body="+originBody)
 	target := e2e.DeployServerPod(t, ctx, origin)
-	allowed := fmt.Sprintf("%s.%s.svc.cluster.local", origin.Name, target.Namespace)
+	allowed := target.SvcName() + ".cluster.local"
 
-	_, actorName, _ := createAndResumeActorWithEgress(t, ctx, "egress-policy", e2e.EgressFixture(), e2e.EgressAllowHTTP(allowed))
+	fixture := e2e.EgressFixture()
+	_, actorName, _ := createAndResumeActorWithEgress(t, ctx, "egress-policy", fixture, e2e.EgressAllowHTTP(allowed))
+	_, controlName, _ := createAndResumeActorWithEgress(t, ctx, "egress-policy-control", fixture, e2e.EgressAllowAll()...)
 	router := mustRouterClient(t, ctx)
 	defer router.Close()
 	actorRef := resources.ActorRef{Atespace: networkingAtespace, Name: actorName}
+	controlRef := resources.ActorRef{Atespace: networkingAtespace, Name: controlName}
 
 	url := "http://" + allowed + "/healthz"
 	status, body := fetchThroughEgressActor(t, ctx, router, actorRef, url)
@@ -66,6 +70,14 @@ func TestActorEgressPolicyDeniesUnlistedHost(t *testing.T) {
 	}
 
 	url = fmt.Sprintf("http://%s/healthz", target.Address())
+	status, body = fetchThroughEgressActor(t, ctx, router, controlRef, url)
+	if status != http.StatusOK {
+		t.Fatalf("control actor fetch of %s returned HTTP %d, want 200; body: %s", url, status, body)
+	}
+	if got := decodeEgressFetch(t, body); got.Body != originBody {
+		t.Fatalf("control actor fetch of %s returned origin body %q, want %q", url, got.Body, originBody)
+	}
+
 	status, body = fetchThroughEgressActorUntil(t, ctx, router, actorRef, url, notTransient)
 	if !dataplane.IsEgressPolicyDenied(status, string(body)) {
 		t.Fatalf("fetch of the same origin by address %s returned HTTP %d, want an egress-policy denial; body: %s", url, status, body)
