@@ -172,3 +172,17 @@ hack/run-e2e-kind.sh -v -args --no-color
 
 CI also deploys the NFS CSI driver and the demos before this, and repeats the
 run with `E2E_SANDBOX_CLASS=microvm`. Neither matters for this suite.
+
+## Per-actor egress policy
+
+The [networking suite](../networking/egresspolicy_test.go) checks that two
+actors in the same atespace get different decisions for the same origin IP.
+The control actor can fetch the origin by IP. The restricted actor can fetch
+it by its allowed hostname and is denied by IP.
+
+With the [egress demo for your sandbox class](../../README.md#sandbox-classes)
+deployed, run:
+
+```
+hack/run-e2e-kind.sh ./internal/e2e/suites/networking -v -run '^TestActorEgressPolicyDeniesUnlistedHost$'
+```
